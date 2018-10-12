@@ -1,0 +1,253 @@
+import pygame
+from pygame.locals import *
+from constants import *
+from pacman import Pacman
+from nodes import NodeGroup
+from pellets import PelletGroup
+from ghosts import Ghosts
+from fruits import FruitGroup, DisplayedFruit
+from lifeicons import Lives
+from spritesheet import SpriteSheet
+from maze import MazeGroup, MazeFactory
+from text import Text
+
+class GameController(object):
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode(SCREENSIZE, 0, 32)
+        self.backgroundList = []
+        self.setBackGround()
+        self.clock = pygame.time.Clock()
+        self.score = 0
+        self.pauseLength = -1
+        self.pauseTime = 0 
+        self.level = 1
+        self.lives = 5
+        self.displayedFruit = None
+        self.mazeFetcher = MazeFactory()
+
+    def setBackGround(self):
+        self.backgroundList = []
+        background1 = pygame.surface.Surface(SCREENSIZE).convert()
+        background1.fill(BLACK)
+        background2 = pygame.surface.Surface(SCREENSIZE).convert()
+        background2.fill(BLACK)
+        self.backgroundList.append(background1)
+        self.backgroundList.append(background2)
+
+    def startGame(self):
+        print "Starting level"
+        self.nextLevel = False
+        #self.lives = 5
+        self.sheet = SpriteSheet()
+        maze = self.mazeFetcher.nextMaze()
+        scheme = self.mazeFetcher.nextScheme()
+        self.nodes = NodeGroup(maze)
+        self.pellets = PelletGroup(maze)
+        self.mazes = MazeGroup(self.sheet, maze, self.backgroundList, scheme)
+        self.pacman = Pacman(self.nodes, self.sheet)
+        self.ghosts = Ghosts(self.nodes, self.sheet)
+        self.paused = True
+        self.fruit = None
+
+        if self.displayedFruit is None:
+            self.displayedFruit = DisplayedFruit(self.sheet)
+
+        self.pelletsEaten = 0
+        self.lifeIcons = Lives(self.sheet)
+        self.hiScoreTxtStatic = Text("HI SCORE", WHITE, 0,0,16)
+        self.scoreTxtStatic = Text("SCORE", WHITE, 208,0,16)
+        self.levelTxtStatic = Text("LEVEL", WHITE, 368,0,16)        
+        self.hiscoreLabel = Text(str(self.score).zfill(8), WHITE, 0, 16, 16)
+        self.scoreLabel = Text(str(self.score).zfill(8), WHITE, 208, 16, 16)
+        self.levelLabel = Text(str(self.level).zfill(3), WHITE, 400, 16, 16)
+        self.messageLabel = Text("BEGIN", RED, 184, 320, 16)
+        self.ghostScoreLabel = None
+        self.fruitScoreLabel = None
+        self.startNewGame = False
+
+    def restartLevel(self):
+        self.pacman = Pacman(self.nodes, self.sheet)
+        self.ghosts = Ghosts(self.nodes, self.sheet)
+        self.paused = True
+        self.fruit = None
+        self.messageLabel = Text("BEGIN", RED, 184, 320, 16)
+        self.ghostScoreLabel = None
+        self.fruitScoreLabel = None
+
+    #++++++++++++++++
+    def newGame(self):
+        self.setBackGround() #++++++++
+        self.lives = 5
+        self.score = 0
+        self.displayedFruit = None
+        self.mazeFetcher = MazeFactory() #+++++++++
+        self.startGame()
+    #-----------------
+
+    def update(self):
+        dt = self.clock.tick(30) / 1000.0
+        if not self.paused:
+            self.pacman.update(dt)
+            self.ghosts.update(dt, self.pacman)
+            self.pellets.update(dt)
+            if self.fruit is not None:
+                self.fruit.update(dt)
+            if self.fruitScoreLabel is not None:
+                if self.fruitScoreLabel.hasLifespan:
+                    self.fruitScoreLabel.update(dt)
+                else:
+                    self.fruitScoreLabel = None
+                
+        else:
+            if self.nextLevel:
+                if self.mazes.flash:
+                    self.mazes.update(dt)
+                else:
+                    self.setBackGround() #+++++++
+                    self.startGame()
+            else:
+                if self.pauseLength != -1:
+                    self.pauseTime += dt
+                    if self.pauseTime >= self.pauseLength:
+                        self.paused = False
+                        self.pauseLength = -1
+                        self.pauseTime = 0
+                        self.ghosts.show()
+                        self.ghostScoreLabel = None
+
+                if not self.pacman.alive:
+                    self.pacman.update(dt)
+                    if self.pacman.deathSequenceFinished:
+                        print self.lives
+                        if self.lives == 0:
+                            self.messageLabel = Text("GAME OVER", RED, 160, 320, 16)
+                            self.startNewGame = True
+                            #self.startGame()
+                        else:
+                            self.restartLevel()
+
+        self.checkEvents()
+        self.scoreLabel.updateText(str(self.score).zfill(8))
+        self.render()
+
+    def checkEvents(self):
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                exit()
+            if event.type == KEYDOWN:
+                if event.key == K_SPACE:
+                    self.paused = not self.paused
+                    if self.startNewGame:
+                        self.startNewGame = False
+                        #self.lives = 5#=========
+                        #self.startGame()
+                        self.newGame()#+++++++++
+                    else:
+                        if self.paused:
+                            self.messageLabel = Text("PAUSE", RED, 184, 320, 16)
+                            self.ghosts.hide()
+                        else:
+                            self.messageLabel = None
+                            self.ghosts.show()
+
+        if not self.paused:
+            self.checkPelletEvents()
+            self.checkGhostEvents()
+            self.checkFruitEvents()
+
+    def checkPelletEvents(self):
+        pellet = self.pacman.eatPellets(self.pellets.pelletList)
+        if pellet:
+            self.pelletsEaten += 1
+            self.score += pellet.points
+            #*******
+            #self.ghosts.release(self.pelletsEaten)
+            #*******
+            if (self.pelletsEaten == 70 or self.pelletsEaten == 140):
+                if self.fruit is None:
+                    self.fruit = FruitGroup(self.nodes, self.sheet, self.level)
+
+            self.pellets.pelletList.remove(pellet)
+            if pellet.name == "powerpellet":
+                self.ghosts.freightMode()
+            if self.pellets.isEmpty():
+                print "NO MORE PELLETS"
+                self.level += 1
+                self.nextLevel = True
+                self.mazes.flash = True
+                self.paused = True
+                self.ghosts.hide()
+
+    def checkGhostEvents(self):
+        self.ghosts.release(self.pelletsEaten)
+        ghost = self.pacman.eatGhost(self.ghosts)
+        if ghost is not None:
+            #print ghost.name
+            if ghost.mode.name == "FREIGHT":
+                self.score += self.ghosts.points
+                self.ghostScoreLabel = Text(str(self.ghosts.points), WHITE, ghost.position.x, ghost.position.y, 8)
+                self.ghosts.increasePoints()
+                ghost.spawnMode()
+                self.paused = True
+                self.pauseLength = 0.5
+                ghost.hide = True
+            elif ghost.mode.name != "SPAWN":
+                pass
+                #self.lives -= 1
+                #self.paused = True
+                #self.pacman.alive = False
+                #self.pacman.animate.setAnimation("death", 0)
+                #for ghost in self.ghosts:
+                #    ghost.hide = True
+
+    def checkFruitEvents(self):
+        if self.fruit is not None:
+            if self.pacman.eatFruit(self.fruit.getFruit()) or self.fruit.canKill():
+                if not self.fruit.canKill():
+                    self.score += self.fruit.getPoints()
+                    self.displayedFruit.add(self.fruit.getName())
+                    pos = self.fruit.getPosition()
+                    self.fruitScoreLabel = Text(str(self.fruit.getPoints()), WHITE, 
+                                                pos.x, pos.y, 8)
+                    self.fruitScoreLabel.hasLifespan = True
+                self.fruit = None
+            
+
+
+    def render(self):
+        self.screen.blit(self.backgroundList[self.mazes.index], (0, 0))
+        #self.nodes.render(self.screen)
+        self.pellets.render(self.screen)
+        if not self.paused:
+            if self.fruit is not None:
+                self.fruit.render(self.screen)
+            self.pacman.render(self.screen)
+        else:
+            if not self.pacman.alive:
+                self.pacman.render(self.screen)
+        self.ghosts.render(self.screen)
+        #print self.lives
+        self.lifeIcons.render(self.screen, self.lives-1)
+        self.hiScoreTxtStatic.render(self.screen)
+        self.scoreTxtStatic.render(self.screen)
+        self.levelTxtStatic.render(self.screen)
+        self.scoreLabel.render(self.screen)
+        self.hiscoreLabel.render(self.screen)
+        self.levelLabel.render(self.screen)
+        if self.messageLabel is not None:
+            self.messageLabel.render(self.screen)
+        if self.ghostScoreLabel is not None:
+            self.ghostScoreLabel.render(self.screen)
+        if self.fruitScoreLabel is not None:
+            self.fruitScoreLabel.render(self.screen)
+        self.displayedFruit.render(self.screen)
+        pygame.display.update()
+
+
+
+if __name__ == "__main__":
+    game = GameController()
+    game.startGame()
+    while True:
+        game.update()
